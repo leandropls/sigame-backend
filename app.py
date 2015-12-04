@@ -7,11 +7,16 @@ from tornado.ioloop import IOLoop
 from tornado.options import parse_command_line
 
 from datetime import datetime
+import json
 
-class EchoWebSocket(WebSocketHandler):
+class SigameWebSocket(WebSocketHandler):
     ping_data = ''
     ping_timer = None
     timeout_timer = None
+
+    def get(self, channel, *args, **kwargs):
+        self.channel = channel
+        return super().get(*args, **kwargs)
 
     def reset_ping(self, schedule_ping = True):
         '''Remove ping and timeout timer and schedule new ping'''
@@ -53,7 +58,13 @@ class EchoWebSocket(WebSocketHandler):
     def on_message(self, message):
         '''Deal with messages'''
         self.reset_ping()
-        self.write_message(message)
+        try:
+            message = json.loads(message)
+        except:
+            return
+        if not isinstance(message, list):
+            return
+        self.write_message(json.dumps(message))
 
     def on_close(self):
         '''Deal with a closing connection'''
@@ -63,7 +74,7 @@ class EchoWebSocket(WebSocketHandler):
 
 def main():
     parse_command_line()
-    app = Application([(r'/', EchoWebSocket)])
+    app = Application([(r'/(\w{1,64})', SigameWebSocket)])
     app.listen(8080)
     IOLoop.current().start()
 
