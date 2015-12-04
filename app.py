@@ -45,6 +45,7 @@ class EchoWebSocket(WebSocketHandler):
         return True
 
     def open(self):
+        '''Deal with a new connection'''
         self.io_loop = IOLoop.current()
         self.reset_ping()
         print("WebSocket opened")
@@ -55,7 +56,7 @@ class EchoWebSocket(WebSocketHandler):
         self.write_message(message)
 
     def on_close(self):
-        '''Deal with closing sockets'''
+        '''Deal with a closing connection'''
         self.reset_ping(False)
         print("WebSocket closed")
 
