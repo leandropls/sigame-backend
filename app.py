@@ -11,7 +11,7 @@ from tornado.options import parse_command_line
 from datetime import datetime
 import json
 
-sigame = Sigame()
+sigame = Sigame('sigame.online')
 
 class SigameUpstream(object):
     def __init__(self, wsh):

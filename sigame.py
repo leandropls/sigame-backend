@@ -4,10 +4,18 @@ from inspect import getargspec
 import re
 import json
 
+class NameCollisionError(Exception):
+    pass
+
 class Connection(object):
+    _name_regexp = re.compile(r'^[\w ]{1,32}$')
+    name = None
+    realname = None
+
     def __init__(self, channel, upstream):
         self.upstream = upstream
         self.channel = channel
+        self.srvname = channel.srvname
 
     ## Connection interface
     def message(self, message):
@@ -40,48 +48,92 @@ class Connection(object):
 
     def close(self):
         '''Close connection'''
-        self.channel.remove_connection(self)
+        if self.name is not None:
+            self.channel.remove_name(self.name)
         self.channel = None
         self.upstream = None
 
     ## Server initiated actions
-    def srv_message(self, *message):
-        self.upstream.send(json.dumps(message))
+    def srv_message(self, message):
+        self.upstream.send(message)
 
     ## User initiated actions
     def usr_echo(self, message):
         '''Process echo command'''
         if not isinstance(message, str):
             return
-        self.srv_message('ECHO', message)
+        self.srv_message(json.dumps([self.srvname, 'ECHO', message]))
+
+    def usr_register(self, name):
+        '''Process REGISTER command'''
+        # Don't register registered users
+        if self.name is not None:
+            return
+
+        # Reject invalid names
+        if not isinstance(name, str) or self._name_regexp.match(name) is None:
+            return
+
+        # Register user
+        realname = name
+        name = name.lower()
+        try:
+            self.channel.add_name(name, self)
+        except NameCollisionError:
+            self.srv_message(json.dumps(
+                [self.srvname, 'ERROR', 433, 'Name already in use.']))
+            return
+        self.realname = realname
+        self.name = name
+        self.channel.srv_message(json.dumps([self.srvname, 'REGISTER', self.realname]))
+
+    def usr_location(self, lat, lng):
+        '''Process LOCATION command'''
+        if self.realname is None:
+            return
+        if not (isinstance(lat, (int, float)) and
+                isinstance(lng, (int, float))):
+            return
+        self.channel.srv_message(json.dumps([self.realname, 'LOCATION', lat, lng]))
 
 class Channel(object):
     def __init__(self, channame, sigame):
-        self.connections = set()
+        self.names = {}
         self.channame = channame
         self.sigame = sigame
+        self.srvname = sigame.name
 
     def __len__(self):
         return len(self.users)
 
-
     def connection(self, upstream):
         '''Add and return new connection to channel'''
         conn = Connection(self, upstream)
-        self.connections.add(conn)
         return conn
 
-    def remove_connection(self, conn):
-        '''Remove connection from channel'''
+    def add_name(self, name, conn):
+        '''Add name to channel'''
+        if name in self.names:
+            raise NameCollisionError
+        self.names[name] = conn
+
+    def remove_name(self, name):
+        '''Remove name from channel'''
         try:
-            self.connections.remove(conn)
+            del self.names[name]
         except KeyError:
             return
 
-class Sigame(object):
-    _channel_regexp = re.compile(r'^[\w]{1,64}')
+    def srv_message(self, *message):
+        '''Send message to all users'''
+        for conn in self.names.values():
+            conn.srv_message(*message)
 
-    def __init__(self):
+class Sigame(object):
+    _channel_regexp = re.compile(r'^[\w]{1,64}$')
+
+    def __init__(self, servername):
+        self.name = servername
         self.channels = {}
 
     def _get_channel(self, channame):
