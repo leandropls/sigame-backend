@@ -1,8 +1,8 @@
 # coding: utf-8
 
 from inspect import getargspec
-import re
-import json
+import re, json, os, hashlib
+Inf = float('Inf')
 
 class NameCollisionError(Exception):
     pass
@@ -38,9 +38,9 @@ class Connection(object):
         except AttributeError:
             return
         margs = getargspec(method)
-        argcheck = len(message) >= len(margs.args) # count self and command
-        argcheck &= margs.varargs is not None or len(message) == len(margs.args)
-        if not argcheck:
+        min_args = len(margs.args) - (len(margs.defaults) if margs.defaults is not None else 0)
+        max_args = len(margs.args) if margs.varargs is None else Inf
+        if not (min_args <= len(message) <= max_args):
             return
 
         # Call method
@@ -49,7 +49,7 @@ class Connection(object):
     def close(self):
         '''Close connection'''
         if self.name is not None:
-            self.channel.remove_name(self.name)
+            self.channel.remove_name(self.name, self)
         self.channel = None
         self.upstream = None
 
@@ -58,11 +58,11 @@ class Connection(object):
         '''Send message to user'''
         self.upstream.send(message)
 
-    def srv_register(self, realname):
+    def srv_register(self, realname, token):
         '''Register user'''
         name = realname.lower()
         try:
-            self.channel.add_name(name, self)
+            self.channel.add_name(name, self, token)
         except NameCollisionError:
             self.srv_message(json.dumps(
                 [self.srvname, 'ERROR', 433, 'Name already in use.']))
@@ -70,16 +70,17 @@ class Connection(object):
         self.realname = realname
         self.name = name
         self.channel.srv_message(json.dumps([self.srvname, 'REGISTER', self.realname]))
+        self.srv_message(json.dumps([self.srvname, 'TOKEN', token]))
         self.channel.srv_users(self)
 
     ## User initiated actions
     def usr_echo(self, message):
-        '''Process echo command'''
+        '''Process ECHO command'''
         if not isinstance(message, str):
             return
         self.srv_message(json.dumps([self.srvname, 'ECHO', message]))
 
-    def usr_register(self, name):
+    def usr_register(self, name, token = None):
         '''Process REGISTER command'''
         # Don't register registered users
         if self.name is not None:
@@ -90,7 +91,9 @@ class Connection(object):
             return
 
         # Register user
-        self.srv_register(name)
+        if token is None:
+            token = hashlib.sha1(os.urandom(8)).hexdigest()
+        self.srv_register(name, token)
 
     def usr_location(self, lat, lng):
         '''Process LOCATION command'''
@@ -116,28 +119,32 @@ class Channel(object):
         conn = Connection(self, upstream)
         return conn
 
-    def add_name(self, name, conn):
+    def add_name(self, name, conn, token):
         '''Add name to channel'''
-        if name in self.names:
-            raise NameCollisionError
-        self.names[name] = conn
+        if name in self.names: # Name already taken
+            extconn, exttoken = self.names[name]
+            if exttoken != token: # Token is wrong
+                raise NameCollisionError
+            extconn.upstream.close() # Kill old connection
+        self.names[name] = (conn, token) # Register connection
 
-    def remove_name(self, name):
+    def remove_name(self, name, conn = None):
         '''Remove name from channel'''
-        try:
-            del self.names[name]
-        except KeyError:
+        if name not in self.names:
             return
+        if conn is not None and self.names[name][0] != conn:
+            return
+        del self.names[name]
 
     def srv_message(self, message):
         '''Send message to all users'''
-        for conn in self.names.values():
+        for conn, token in self.names.values():
             conn.srv_message(message)
 
     def srv_users(self, conn):
         '''Send list of names to the specified connection'''
         msg = [self.srvname, 'USERS']
-        msg.extend((conn.realname for conn in self.names.values()))
+        msg.extend((conn.realname for conn, token in self.names.values()))
         conn.srv_message(json.dumps(msg))
 
 
