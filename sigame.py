@@ -55,7 +55,22 @@ class Connection(object):
 
     ## Server initiated actions
     def srv_message(self, message):
+        '''Send message to user'''
         self.upstream.send(message)
+
+    def srv_register(self, realname):
+        '''Register user'''
+        name = realname.lower()
+        try:
+            self.channel.add_name(name, self)
+        except NameCollisionError:
+            self.srv_message(json.dumps(
+                [self.srvname, 'ERROR', 433, 'Name already in use.']))
+            return
+        self.realname = realname
+        self.name = name
+        self.channel.srv_message(json.dumps([self.srvname, 'REGISTER', self.realname]))
+        self.channel.srv_users(self)
 
     ## User initiated actions
     def usr_echo(self, message):
@@ -75,17 +90,7 @@ class Connection(object):
             return
 
         # Register user
-        realname = name
-        name = name.lower()
-        try:
-            self.channel.add_name(name, self)
-        except NameCollisionError:
-            self.srv_message(json.dumps(
-                [self.srvname, 'ERROR', 433, 'Name already in use.']))
-            return
-        self.realname = realname
-        self.name = name
-        self.channel.srv_message(json.dumps([self.srvname, 'REGISTER', self.realname]))
+        self.srv_register(name)
 
     def usr_location(self, lat, lng):
         '''Process LOCATION command'''
@@ -124,10 +129,17 @@ class Channel(object):
         except KeyError:
             return
 
-    def srv_message(self, *message):
+    def srv_message(self, message):
         '''Send message to all users'''
         for conn in self.names.values():
-            conn.srv_message(*message)
+            conn.srv_message(message)
+
+    def srv_users(self, conn):
+        '''Send list of names to the specified connection'''
+        msg = [self.srvname, 'USERS']
+        msg.extend((conn.realname for conn in self.names.values()))
+        conn.srv_message(json.dumps(msg))
+
 
 class Sigame(object):
     _channel_regexp = re.compile(r'^[\w]{1,64}$')
