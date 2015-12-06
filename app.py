@@ -3,7 +3,7 @@
 
 from sigame import Sigame
 
-from tornado.websocket import WebSocketHandler
+from tornado.websocket import WebSocketHandler, WebSocketClosedError
 from tornado.web import Application
 from tornado.ioloop import IOLoop
 from tornado.options import parse_command_line
@@ -19,7 +19,10 @@ class SigameUpstream(object):
 
     def send(self, message):
         assert isinstance(message, str)
-        self.wsh.write_message(message)
+        try:
+            self.wsh.write_message(message)
+        except WebSocketClosedError:
+            return
 
     def close(self):
         self.wsh.close()

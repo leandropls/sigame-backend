@@ -49,6 +49,7 @@ class Connection(object):
     def close(self):
         '''Close connection'''
         if self.name is not None:
+            self.channel.srv_message(json.dumps([self.realname, 'QUIT']))
             self.channel.remove_name(self.name, self)
         self.channel = None
         self.upstream = None
@@ -69,8 +70,10 @@ class Connection(object):
             return
         self.realname = realname
         self.name = name
-        self.channel.srv_message(json.dumps([self.srvname, 'REGISTER', self.realname]))
-        self.srv_message(json.dumps([self.srvname, 'TOKEN', token]))
+        self.channel.srv_message(
+            json.dumps([self.srvname, 'REGISTER', self.realname]), self)
+        self.srv_message(
+            json.dumps([self.srvname, 'REGISTER', self.realname, token]))
         self.channel.srv_users(self)
 
     ## User initiated actions
@@ -136,10 +139,16 @@ class Channel(object):
             return
         del self.names[name]
 
-    def srv_message(self, message):
+    def srv_message(self, message, except_conn = None):
         '''Send message to all users'''
-        for conn, token in self.names.values():
-            conn.srv_message(message)
+        if except_conn is None:
+            for conn, token in self.names.values():
+                conn.srv_message(message)
+        else:
+            for conn, token in self.names.values():
+                if conn is except_conn:
+                    continue
+                conn.srv_message(message)
 
     def srv_users(self, conn):
         '''Send list of names to the specified connection'''
