@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 # coding: utf-8
 
+from sigame import Sigame
+
 from tornado.websocket import WebSocketHandler
 from tornado.web import Application
 from tornado.ioloop import IOLoop
@@ -9,23 +11,40 @@ from tornado.options import parse_command_line
 from datetime import datetime
 import json
 
+sigame = Sigame()
+
+class SigameUpstream(object):
+    def __init__(self, wsh):
+        self.wsh = wsh
+
+    def send(self, message):
+        assert isinstance(message, str)
+        self.wsh.write_message(message)
+
+    def close(self):
+        self.wsh.close()
+
 class SigameWebSocket(WebSocketHandler):
     ping_data = ''
     ping_timer = None
     timeout_timer = None
+    channame = None
+    conn = None
 
-    def get(self, channel, *args, **kwargs):
-        self.channel = channel
+    def get(self, channame, *args, **kwargs):
+        self.channame = channame
         return super().get(*args, **kwargs)
 
     def reset_ping(self, schedule_ping = True):
         '''Remove ping and timeout timer and schedule new ping'''
         if self.ping_timer is not None:
             self.io_loop.remove_timeout(self.ping_timer)
+            self.ping_timer = None
         if self.timeout_timer is not None:
             self.io_loop.remove_timeout(self.timeout_timer)
+            self.timeout_timer = None
         if schedule_ping:
-            self.io_loop.call_later(30, self.send_ping)
+            self.ping_timer = self.io_loop.call_later(30, self.send_ping)
 
     def send_ping(self):
         '''Send ping and schedules timeout'''
@@ -53,23 +72,18 @@ class SigameWebSocket(WebSocketHandler):
         '''Deal with a new connection'''
         self.io_loop = IOLoop.current()
         self.reset_ping()
-        print("WebSocket opened")
+        upstream = SigameUpstream(self)
+        self.conn = sigame.connection(self.channame, upstream)
 
     def on_message(self, message):
         '''Deal with messages'''
         self.reset_ping()
-        try:
-            message = json.loads(message)
-        except:
-            return
-        if not isinstance(message, list):
-            return
-        self.write_message(json.dumps(message))
+        self.conn.message(message)
 
     def on_close(self):
         '''Deal with a closing connection'''
         self.reset_ping(False)
-        print("WebSocket closed")
+        self.conn.close()
 
 
 def main():
