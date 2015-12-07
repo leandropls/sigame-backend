@@ -59,11 +59,12 @@ class Connection(object):
         '''Send message to user'''
         self.upstream.send(message)
 
-    def srv_register(self, realname, token):
+    def srv_register(self, realname, oldtoken):
         '''Register user'''
         name = realname.lower()
+        token = hashlib.sha1(os.urandom(8)).hexdigest()
         try:
-            self.channel.add_name(name, self, token)
+            self.channel.add_name(name, self, token, oldtoken)
         except NameCollisionError:
             self.srv_message(json.dumps(
                 [self.srvname, 'ERROR', 433, 'Name already in use.']))
@@ -94,8 +95,6 @@ class Connection(object):
             return
 
         # Register user
-        if token is None:
-            token = hashlib.sha1(os.urandom(8)).hexdigest()
         self.srv_register(name, token)
 
     def usr_location(self, lat, lng):
@@ -122,11 +121,11 @@ class Channel(object):
         conn = Connection(self, upstream)
         return conn
 
-    def add_name(self, name, conn, token):
+    def add_name(self, name, conn, token, oldtoken):
         '''Add name to channel'''
         if name in self.names: # Name already taken
             extconn, exttoken = self.names[name]
-            if exttoken != token: # Token is wrong
+            if exttoken != oldtoken: # Token is wrong
                 raise NameCollisionError
             extconn.upstream.close() # Kill old connection
         self.names[name] = (conn, token) # Register connection
