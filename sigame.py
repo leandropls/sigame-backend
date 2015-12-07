@@ -11,6 +11,7 @@ class Connection(object):
     _name_regexp = re.compile(r'^[\w ]{1,32}$')
     name = None
     realname = None
+    active = True
 
     def __init__(self, channel, upstream):
         self.upstream = upstream
@@ -48,9 +49,13 @@ class Connection(object):
 
     def close(self):
         '''Close connection'''
+        if not self.active:
+            return
+        self.active = False
         if self.name is not None:
             self.channel.srv_message(json.dumps([self.realname, 'QUIT']))
             self.channel.remove_name(self.name, self)
+        self.upstream.close()
         self.channel = None
         self.upstream = None
 
@@ -61,6 +66,8 @@ class Connection(object):
 
     def srv_register(self, realname, oldtoken):
         '''Register user'''
+        if not self.active:
+            return
         name = realname.lower()
         token = hashlib.sha1(os.urandom(8)).hexdigest()
         try:
@@ -124,10 +131,10 @@ class Channel(object):
     def add_name(self, name, conn, token, oldtoken):
         '''Add name to channel'''
         if name in self.names: # Name already taken
-            extconn, exttoken = self.names[name]
-            if exttoken != oldtoken: # Token is wrong
+            exstconn, exsttoken = self.names[name]
+            if exsttoken != oldtoken: # Token is wrong
                 raise NameCollisionError
-            extconn.upstream.close() # Kill old connection
+            exstconn.close() # Kill old connection
         self.names[name] = (conn, token) # Register connection
 
     def remove_name(self, name, conn = None):
